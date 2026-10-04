@@ -1,0 +1,20 @@
+# Only the product and its results are published.
+# Everything else (data collection, cloud setup, training data, notebooks,
+# internal notes) stays local.
+/*
+!/.gitignore
+!/README.md
+!/LICENSE
+!/pyproject.toml
+!/polymorph_ai/
+!/tests/
+!/examples/
+!/dataset/
+/examples/usecases.py
+
+
+__pycache__/
+*.egg-info/
+build/
+dist/
+.pytest_cache/

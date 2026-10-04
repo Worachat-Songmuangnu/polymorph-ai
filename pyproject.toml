@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "polymorph-ai"
+version = "1.0.0"
+description = "A decorator that uses a trained neural network to run your function sequentially, with threads, or with processes - whichever is fastest."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["numpy"]
+license = "MIT"
+
+[project.urls]
+Homepage = "https://github.com/Worachat-Songmuangnu/polymorph-ai"
+
+[tool.setuptools]
+packages = ["polymorph_ai"]
+
+[tool.setuptools.package-data]
+polymorph_ai = ["model.npz"]
