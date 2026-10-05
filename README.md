@@ -20,16 +20,18 @@ if __name__ == "__main__":            # required on Windows/macOS for processes
 ## Install
 
 ```bash
-pip install git+https://github.com/Worachat-Songmuangnu/polymorph-ai.git
+pip install polymorph-ai
 ```
 
-Or download the wheel from the [latest release](https://github.com/Worachat-Songmuangnu/polymorph-ai/releases/latest) and `pip install` it. The only dependency is numpy.
+Dependencies: numpy and cloudpickle. Tested on Linux with Python 3.10, 3.12 and 3.14, and on Windows with Python 3.14.
+
+Works in Jupyter too: a function written in a notebook cell is sent to the worker processes by value (with cloudpickle), so it can still use multiprocessing on Windows and macOS.
 
 ## How it decides
 
 Every `.map(items)` call goes through these steps:
 
-1. **Safety checks.** Empty or very short lists, one worker, or a call nested inside another polymorph_ai worker all just run as a plain loop. If the function or the items cannot be sent to another process (a lambda, a function defined inside another function, a function defined in Jupyter, unpicklable items), multiprocessing is ruled out.
+1. **Safety checks.** Empty or very short lists, one worker, or a call nested inside another polymorph_ai worker all just run as a plain loop. If the function or the items cannot be sent to another process (a lambda, a function defined inside another function, unpicklable items), multiprocessing is ruled out.
 2. **First item.** The first item runs and is timed. If `time × number of items` is under 10 ms, the job is too small for any pool to pay off, so the rest runs as a plain loop.
 3. **Cache.** A call that looks like an earlier one (similar number of items, first-item time, and item size) reuses that decision and skips the probe.
 4. **Probe.** The next items run for about 50 ms, first one by one and then on 2 threads, to measure the 13 features: call site, static code analysis (AST), runtime probe, and thread probe. The probe uses the same code (`polymorph_ai/features.py`) that collected the training data. **Probed items are real work: their results are kept and no item ever runs twice.**
@@ -54,14 +56,14 @@ warm_up()                                      # start the pools early (e.g. at 
 
 ## Results
 
-**Model** (13,603 jobs collected on 16 machine settings, see [`dataset/`](dataset/), GroupKFold by workload template, so every test job comes from code the model never trained on). Time lost compared with always picking the fastest mode:
+**Model** (13,603 jobs collected on 16 machine settings, see [`dataset/`](https://github.com/Worachat-Songmuangnu/polymorph-ai/tree/main/dataset), GroupKFold by workload template, so every test job comes from code the model never trained on). Time lost compared with always picking the fastest mode:
 
 - Always multiprocessing: +22.1%
 - if-else rules: +13.0%
 - Random Forest: +5.8%
 - **MLP: +4.3%**
 
-**Library** (`python examples/demo.py`: 8 everyday jobs that are not in the training data, 8 CPUs). Total time compared with perfect picks:
+**Library** ([`examples/demo.py`](https://github.com/Worachat-Songmuangnu/polymorph-ai/blob/main/examples/demo.py): 8 everyday jobs that are not in the training data, 8 CPUs). Total time compared with perfect picks:
 
 | | Windows | Linux (WSL) |
 |---|---|---|
@@ -84,11 +86,12 @@ warm_up()                                      # start the pools early (e.g. at 
 - The first item and the probe items run in the calling thread, so a job with a few very long items loses one item's worth of parallel time.
 - The model was trained on synthetic workloads from 13 families. Code that behaves unlike all of them can still be mispredicted. In the demo, sorting 20k-number lists stays sequential when processes would be twice as fast.
 - asyncio is not supported: a decorator cannot turn ordinary code into `async def` code.
+- In Jupyter on Windows, call `shutdown()` before you close or restart the kernel. If the kernel is stopped straight after the cell that started the process pool, the worker processes can be left running.
 
 ## Tests
 
 ```bash
-python -m pytest tests -v    # 27 tests, pass on Windows and Linux
+python -m pytest tests -v    # 28 tests, pass on Windows and Linux
 ```
 
 ## Project layout

@@ -4,15 +4,28 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "polymorph-ai"
-version = "1.0.0"
+version = "1.1.0"
 description = "A decorator that uses a trained neural network to run your function sequentially, with threads, or with processes - whichever is fastest."
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["numpy"]
+dependencies = ["numpy", "cloudpickle"]
+authors = [{ name = "Worachat Songmuangnu" }]
+keywords = ["parallel", "multiprocessing", "threading", "decorator", "machine-learning", "performance"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: System :: Distributed Computing",
+]
 license = "MIT"
 
 [project.urls]
 Homepage = "https://github.com/Worachat-Songmuangnu/polymorph-ai"
+Source = "https://github.com/Worachat-Songmuangnu/polymorph-ai"
+Issues = "https://github.com/Worachat-Songmuangnu/polymorph-ai/issues"
 
 [tool.setuptools]
 packages = ["polymorph_ai"]

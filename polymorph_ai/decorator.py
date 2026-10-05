@@ -34,6 +34,11 @@ import time
 from dataclasses import dataclass, field
 from multiprocessing.pool import ThreadPool
 
+try:
+    import cloudpickle      # sends functions written in Jupyter/REPL to worker processes by value
+except ImportError:         # pragma: no cover
+    cloudpickle = None
+
 from .features import PROBE_MIN_ITEMS, ast_features, extract_features, thread_cpu_time, usable_cpu_count
 from .model import ModeModel
 
@@ -111,7 +116,23 @@ def _get_pool(mode, n_workers):
             else:   # explicit context: same reason as _ThreadPool
                 pool = multiprocessing.get_context(_start_method()).Pool(n_workers, initializer=_mark_worker)
             _pools[(mode, n_workers)] = pool
+            _register_shutdown()
         return pool
+
+
+_shutdown_registered = False
+
+
+def _register_shutdown():
+    # atexit runs the last registered function first. multiprocessing registers its own
+    # exit hook when the first pool starts; if that hook ran before ours, it would kill
+    # the pool's workers, the pool would start new ones, and those would be left running
+    # after the program (or Jupyter kernel) exits. Registering after the first pool
+    # exists makes our shutdown() run first.
+    global _shutdown_registered
+    if not _shutdown_registered:
+        atexit.register(shutdown)
+        _shutdown_registered = True
 
 
 def _pool_is_warm(mode, n_workers):
@@ -128,12 +149,20 @@ def warm_up(n_workers=None, modes=("threading", "multiprocessing")):
         _get_pool(mode, n_workers).map(int, range(n_workers), chunksize=1)
 
 
-@atexit.register
 def shutdown():
     """Stop all pools (called automatically when the program exits)."""
     with _pools_lock:
         for pool in _pools.values():
-            pool.terminate()
+            # pool.terminate() can hang while the interpreter is shutting down (seen in
+            # Jupyter kernels on Windows), which left the worker processes running after
+            # the kernel was gone. Give it a few seconds, then kill the workers directly.
+            workers = list(getattr(pool, "_pool", []))
+            stopper = threading.Thread(target=pool.terminate, daemon=True)
+            stopper.start()
+            stopper.join(timeout=3)
+            for p in workers + list(getattr(pool, "_pool", [])):
+                if hasattr(p, "kill") and p.is_alive():
+                    p.kill()
         _pools.clear()
 
 
@@ -155,6 +184,14 @@ def _find(module, qualname):
     return obj
 
 
+def _defined_without_file(target):
+    """True for a function typed into Jupyter or a REPL: worker processes started
+    with spawn (Windows, macOS) cannot import it by name."""
+    module = sys.modules.get(getattr(target, "__module__", None))
+    return (module is not None and module.__name__ == "__main__" and not hasattr(module, "__file__")
+            and _start_method() != "fork")
+
+
 def _process_problem(target, sample_item):
     """None if target(item) can run in a worker process, else the reason why not."""
     if multiprocessing.parent_process() is not None or getattr(_worker, "active", False):
@@ -165,15 +202,20 @@ def _process_problem(target, sample_item):
     module = sys.modules.get(getattr(target, "__module__", None))
     if module is None:
         return "function's module cannot be found"
-    if (module.__name__ == "__main__" and not hasattr(module, "__file__")
-            and _start_method() != "fork"):
-        return "function defined in Jupyter/REPL cannot be sent to worker processes"
-    try:
-        found = _find(module.__name__, qualname)
-    except AttributeError:
-        found = None
-    if found is not target:
-        return "function cannot be found by its name"
+    if _defined_without_file(target):
+        if cloudpickle is None or not isinstance(target, AdaptiveExec):
+            return "function defined in Jupyter/REPL cannot be sent to worker processes"
+        try:                                   # it travels by value: check that this really works
+            pickle.loads(pickle.dumps(target))
+        except Exception as e:
+            return f"function defined in Jupyter/REPL cannot be pickled ({type(e).__name__})"
+    else:
+        try:
+            found = _find(module.__name__, qualname)
+        except AttributeError:
+            found = None
+        if found is not target:
+            return "function cannot be found by its name"
     try:
         pickle.dumps(sample_item)
     except Exception:
@@ -398,6 +440,19 @@ class AdaptiveExec:
         return results
 
     def __reduce__(self):
+        if _defined_without_file(self) and cloudpickle is not None:
+            # Written in Jupyter/REPL: there is no file to import it from, so send
+            # the code itself. Inside that cloudpickle call, a reference back to
+            # this wrapper (e.g. a recursive function calling itself by name) is
+            # rebuilt from the function, which cloudpickle has already memoised.
+            if getattr(_by_value, "active", False):
+                return _rewrap, (self.func, self.n_workers, self.mode, self.cache, self.verbose)
+            _by_value.active = True
+            try:
+                data = cloudpickle.dumps(self)
+            finally:
+                _by_value.active = False
+            return cloudpickle.loads, (data,)
         # Worker processes import the module and look the function up by name,
         # which finds this object again (pickling self.func by name would fail:
         # its name now points at this wrapper).
@@ -405,6 +460,13 @@ class AdaptiveExec:
 
     def __repr__(self):
         return f"<adaptive_exec {self.__module__}.{self.__qualname__}>"
+
+
+_by_value = threading.local()
+
+
+def _rewrap(func, n_workers, mode, cache, verbose):
+    return AdaptiveExec(func, n_workers, mode, cache, verbose)
 
 
 def adaptive_exec(func=None, *, n_workers=None, mode=None, cache=True, verbose=False):

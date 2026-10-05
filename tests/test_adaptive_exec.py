@@ -230,3 +230,30 @@ def test_decision_explains_itself():
     text = str(waits.last_run)
     assert "waits" in text and waits.last_run.mode in text and "overhead" in text
     assert waits.last_run.features["n_items"] == 200
+
+
+JUPYTER_STYLE = """
+from polymorph_ai import adaptive_exec, shutdown
+
+@adaptive_exec
+def fib(n):                      # recursive: its body refers to the decorated name
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+
+out = fib.map([18] * 16, mode="multiprocessing")
+assert out == [fib(18)] * 16
+auto = fib.map([22] * 48, cache=False)
+assert not any("no multiprocessing" in note for note in fib.last_run.notes), fib.last_run.notes
+shutdown()
+print("OK")
+"""
+
+
+def test_function_without_a_file_can_use_processes():
+    # python -c has no __main__.__file__, exactly like a Jupyter cell: the function
+    # must travel to the worker processes by value (cloudpickle).
+    import subprocess
+    import sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    done = subprocess.run([sys.executable, "-c", JUPYTER_STYLE], cwd=root, capture_output=True,
+                          text=True, timeout=120)
+    assert done.returncode == 0 and "OK" in done.stdout, done.stderr
