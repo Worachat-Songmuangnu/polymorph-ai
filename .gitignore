@@ -1,5 +1,5 @@
 # Only the product and its results are published.
-# Everything else (data collection, cloud setup, training data, notebooks,
+# Everything else (data collection, cloud setup, raw training data,
 # internal notes) stays local.
 /*
 !/.gitignore
@@ -10,7 +10,13 @@
 !/tests/
 !/examples/
 !/dataset/
+!/ml_notebooks/
+!/brochure/
 /examples/usecases.py
+/ml_notebooks/figures/
+/ml_notebooks/mlflow/mlflow.db
+/ml_notebooks/mlflow/artifacts/
+/ml_notebooks/results/
 
 
 __pycache__/

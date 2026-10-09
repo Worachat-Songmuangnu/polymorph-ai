@@ -79,6 +79,52 @@ warm_up()                                      # start the pools early (e.g. at 
 - Compared with a perfect choice of mode, the first call is within 15% once the job takes 5 s or more.
 - Repeated calls skip the probe, so they cost almost nothing.
 
+## Machine learning approach
+
+The task is a 3-class classification problem: given 13 features measured cheaply at call time, predict which execution mode (`sequential`, `threading`, `multiprocessing`) will finish a job first. Three models are compared on the same splits: an if-else rule baseline, a Random Forest, and a neural network (MLP). The full work is in [`ml_notebooks/`](ml_notebooks/).
+
+**1. Data and labels.** 13,603 jobs from 52 workload templates were run in all three modes on 16 machine settings (Windows and Linux, laptop and cloud VM). The label is the fastest mode; if two modes are within 5% of each other the cheaper one is chosen, because the difference is noise. The three classes are unbalanced but not extremely (the smallest class is about one fifth of the rows), so class weights are used instead of oversampling.
+
+![Class balance](ml_notebooks/images/02_class_balance.png)
+
+**2. What decides the best mode.** The answer depends on the machine, not only on the code. With 1 core multiprocessing almost never wins; from 3 cores it wins about half of the jobs. The workload family matters too: I/O-bound code favours threads, tiny jobs favour a plain loop.
+
+![Winning mode by number of cores](ml_notebooks/images/02_cores_vs_label.png)
+![Winning mode by workload family](ml_notebooks/images/02_label_by_family.png)
+
+**3. Honest evaluation.** The decorator is used on code the model has never seen, so rows are not split at random. Each test fold contains whole templates that were not in training (StratifiedGroupKFold, 5 folds). A random row split lets Random Forest memorise templates and look better than it is.
+
+![Grouped folds](ml_notebooks/images/03_group_folds.png)
+
+**4. Metric.** Accuracy treats a wrong guess on a 10 ms job like a wrong guess on a 40 s job. The main metric is therefore *time lost*: total time of the chosen modes divided by total time of the best modes, minus 1 (0% is perfect).
+
+**5. Model comparison** (5 template folds):
+
+| model | time lost (lower is better) | accuracy |
+|---|---|---|
+| always multiprocessing | +22.1% | 44.7% |
+| if-else rules | +13.0% | 72.7% |
+| Random Forest | +5.8% | 85.7% |
+| **MLP, tuned with Optuna** | **+4.3%** | 84.5% |
+
+![All models](ml_notebooks/images/03_all_models_final.png)
+
+The if-else rules (thresholds found by grid search) lose more than twice as much time as the learned models, because the right answer depends on several features at once. The MLP uses log-transformed, standardised features, two hidden ReLU layers with dropout, L2 and early stopping. Optuna (5 outer folds x 50 trials) tuned layers, neurons, dropout, learning rate, batch size and L2, always using only the training part of each fold.
+
+The loss landscape below shows the training path of the 3,075 weights projected on two PCA directions (the method of Li et al., NeurIPS 2018).
+
+![Loss landscape](ml_notebooks/images/03_loss_landscape.png)
+![Optuna history and parameter importance](ml_notebooks/images/03_optuna_history_importance.png)
+
+**6. Stress tests.** The MLP loses the least time on every correct split: unseen machine MLP 5.7% / RF 7.7% / if-else 10.7%; unseen workload family MLP 4.4% / RF 6.0% / if-else 15.6%. Random Forest memorises its training data (time lost 0.25% on train vs 5.5% on test); the MLP gap is much smaller (3.1% vs 4.7%). Over 3 random seeds the MLP gets 4.8% +/- 0.3 and the RF 5.8% +/- 0.1.
+
+![Stress tests](ml_notebooks/images/03_stress_tests.png)
+![Train/test gap](ml_notebooks/images/03_train_test_gap.png)
+
+**7. Demo.** [`ml_notebooks/04_demo.ipynb`](ml_notebooks/04_demo.ipynb) runs the trained model on four jobs. It picks processes for heavy computation, threads for web requests, and no helper for tiny jobs.
+
+![Demo race](ml_notebooks/images/08_demo_race.png)
+
 ## Limitations
 
 - The decorated function takes **one item** and is applied to every item (`map`). polymorph_ai cannot parallelise code that does not have this shape.
@@ -101,4 +147,17 @@ polymorph_ai/   the library: decorator.py, features.py, model.py + model.npz (th
 tests/          pytest suite
 examples/       demo.py (benchmark vs fixed modes) and its results/
 dataset/        the training dataset (13,603 jobs) and the real-code results (92 jobs)
+ml_notebooks/  notebooks for data cleaning, EDA, model training and a demo (see below)
+brochure/       project brochure (PDF)
 ```
+
+## Analysis notebooks
+
+The notebooks in [`ml_notebooks/`](ml_notebooks/) show how the model was built. Outputs are saved in the files, so they can be read without running them. To rerun them, install `pandas scikit-learn matplotlib keras optuna mlflow` and open each notebook from inside `ml_notebooks/`.
+
+| notebook | content |
+|---|---|
+| [`01_data_cleaning`](ml_notebooks/01_data_cleaning.ipynb) | quality checks, outliers, the 5% tie rule for labels, `data/clean.csv` |
+| [`02_exploratory_data_analysis`](ml_notebooks/02_exploratory_data_analysis.ipynb) | class balance and how the best mode depends on machine, OS and workload |
+| [`03_model_training`](ml_notebooks/03_model_training.ipynb) | if-else vs Random Forest vs MLP, grouped cross-validation, Optuna tuning, stress tests |
+| [`04_demo`](ml_notebooks/04_demo.ipynb) | `@adaptive_exec` on four different jobs, with the decision shown step by step |
